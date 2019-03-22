@@ -71,6 +71,12 @@ var (
 	// ErrUnprotectedNonce indicates that while parsing a JWS or JWE object, a
 	// nonce header parameter was included in an unprotected header object.
 	ErrUnprotectedNonce = errors.New("square/go-jose: Nonce parameter included in unprotected header")
+
+	// ErrUnhandledCriticalProperty indicates that the JWS contained a 'crit'
+	// property, listing one or more critical properties not handled by the
+	// verifier. To support critical properties, register a handler for each
+	// as options to the Verify or DetachedVerify methods.
+	ErrUnhandledCriticalProperty = errors.New("square/go-jose: unsupported critical parameter specified in crit array")
 )
 
 // Key management algorithms

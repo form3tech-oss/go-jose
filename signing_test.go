@@ -21,6 +21,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"reflect"
@@ -330,15 +331,7 @@ func TestInvalidJWS(t *testing.T) {
 	if err != nil {
 		panic(err)
 	}
-
 	obj, err := signer.Sign([]byte("Lorem ipsum dolor sit amet"))
-	obj.Signatures[0].header = &rawHeader{}
-	obj.Signatures[0].header.set(headerCritical, []string{"TEST"})
-
-	_, err = obj.Verify(&rsaTestKey.PublicKey)
-	if err == nil {
-		t.Error("should not verify message with unknown crit header")
-	}
 
 	// Try without alg header
 	obj.Signatures[0].protected = &rawHeader{}
@@ -347,6 +340,97 @@ func TestInvalidJWS(t *testing.T) {
 	_, err = obj.Verify(&rsaTestKey.PublicKey)
 	if err == nil {
 		t.Error("should not verify message with missing headers")
+	}
+}
+
+func TestInvalidJWSWithUnhandledCrit(t *testing.T) {
+	signer, err := NewSigner(SigningKey{PS256, rsaTestKey}, nil)
+	if err != nil {
+		panic(err)
+	}
+
+	obj, err := signer.Sign([]byte("Lorem ipsum dolor sit amet"))
+	obj.Signatures[0].header = &rawHeader{}
+	obj.Signatures[0].header.set(headerCritical, []string{"TEST"})
+	obj.Signatures[0].header.set("TEST", true)
+
+	_, err = obj.Verify(&rsaTestKey.PublicKey)
+	if err == nil {
+		t.Error("should not verify message with unknown crit header")
+	}
+}
+
+func TestValidJWSWithHandledCrit(t *testing.T) {
+	signer, err := NewSigner(SigningKey{PS256, rsaTestKey}, nil)
+	if err != nil {
+		panic(err)
+	}
+
+	obj, err := signer.Sign([]byte("Lorem ipsum dolor sit amet"))
+	obj.Signatures[0].header = &rawHeader{}
+	obj.Signatures[0].header.set(headerCritical, []string{"handleme"})
+	obj.Signatures[0].header.set("handleme", "handlemevalue")
+
+	var handled string
+	handler := func(h *json.RawMessage) error {
+		err := json.Unmarshal(*h, &handled)
+		if err != nil {
+			t.Error(err)
+		}
+		return nil
+	}
+	opt := CritHandler("handleme", handler)
+
+	_, err = obj.Verify(&rsaTestKey.PublicKey, opt)
+	if err != nil {
+		t.Error("should verify message with successfully handled crit header")
+	}
+
+	if handled != "handlemevalue" {
+		t.Errorf("incorrect value passed to crit handler. want=handlemevalue, got=%s", handled)
+	}
+}
+
+func TestInvalidJWSWithMissingCriticalProperty(t *testing.T) {
+	signer, err := NewSigner(SigningKey{PS256, rsaTestKey}, nil)
+	if err != nil {
+		panic(err)
+	}
+
+	obj, err := signer.Sign([]byte("Lorem ipsum dolor sit amet"))
+	obj.Signatures[0].header = &rawHeader{}
+	obj.Signatures[0].header.set(headerCritical, []string{"handleme"})
+
+	handler := func(h *json.RawMessage) error {
+		return nil
+	}
+	opt := CritHandler("handleme", handler)
+
+	_, err = obj.Verify(&rsaTestKey.PublicKey, opt)
+	if err == nil {
+		t.Error("should not verify message with missing critical header")
+	}
+}
+
+func TestInvalidJWSWithHandledCritFailure(t *testing.T) {
+	signer, err := NewSigner(SigningKey{PS256, rsaTestKey}, nil)
+	if err != nil {
+		panic(err)
+	}
+
+	obj, err := signer.Sign([]byte("Lorem ipsum dolor sit amet"))
+	obj.Signatures[0].header = &rawHeader{}
+	obj.Signatures[0].header.set(headerCritical, []string{"handleme"})
+	obj.Signatures[0].header.set("handleme", true)
+
+	handler := func(h *json.RawMessage) error {
+		return errors.New("Bad value")
+	}
+	opt := CritHandler("handleme", handler)
+
+	_, err = obj.Verify(&rsaTestKey.PublicKey, opt)
+	if err == nil {
+		t.Error("should not verify message with failure handling crit header")
 	}
 }
 

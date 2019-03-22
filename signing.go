@@ -282,6 +282,29 @@ func (ctx *genericSigner) Options() SignerOptions {
 	}
 }
 
+type handlerMap map[string]CritHandlerFunc
+
+// An CritHandlerFunc can be used to validate additional header parameters
+// not covered by the JWS specification.
+// The handler function. If an error is returned, the JWS is invalid.
+type CritHandlerFunc func(*json.RawMessage) error
+
+// CritHandlerOption can be provided to validation functions to set an
+// extension handler.
+type CritHandlerOption struct {
+	Parameter string
+	Handler   CritHandlerFunc
+}
+
+// CritHandler returns a new CritHandlerOption for the given
+// parameter name.
+func CritHandler(headerParameter string, handler CritHandlerFunc) CritHandlerOption {
+	return CritHandlerOption{
+		Parameter: headerParameter,
+		Handler:   handler,
+	}
+}
+
 // Verify validates the signature on the object and returns the payload.
 // This function does not support multi-signature, if you desire multi-sig
 // verification use VerifyMulti instead.
@@ -289,8 +312,8 @@ func (ctx *genericSigner) Options() SignerOptions {
 // Be careful when verifying signatures based on embedded JWKs inside the
 // payload header. You cannot assume that the key received in a payload is
 // trusted.
-func (obj JSONWebSignature) Verify(verificationKey interface{}) ([]byte, error) {
-	err := obj.DetachedVerify(obj.payload, verificationKey)
+func (obj JSONWebSignature) Verify(verificationKey interface{}, options ...CritHandlerOption) ([]byte, error) {
+	err := obj.DetachedVerify(obj.payload, verificationKey, options...)
 	if err != nil {
 		return nil, err
 	}
@@ -308,7 +331,7 @@ func (obj JSONWebSignature) UnsafePayloadWithoutVerification() []byte {
 // most cases, you will probably want to use Verify instead. DetachedVerify
 // is only useful if you have a payload and signature that are separated from
 // each other.
-func (obj JSONWebSignature) DetachedVerify(payload []byte, verificationKey interface{}) error {
+func (obj JSONWebSignature) DetachedVerify(payload []byte, verificationKey interface{}, options ...CritHandlerOption) error {
 	verifier, err := newVerifier(verificationKey)
 	if err != nil {
 		return err
@@ -320,13 +343,31 @@ func (obj JSONWebSignature) DetachedVerify(payload []byte, verificationKey inter
 
 	signature := obj.Signatures[0]
 	headers := signature.mergedHeaders()
+
 	critical, err := headers.getCritical()
 	if err != nil {
 		return err
 	}
-	if len(critical) > 0 {
-		// Unsupported crit header
-		return ErrCryptoFailure
+
+	ch := handlerMap{}
+	for _, o := range options {
+		ch[o.Parameter] = o.Handler
+	}
+	for _, c := range critical {
+		if h, ok := ch[c]; ok {
+
+			val, ok := headers[HeaderKey(c)]
+			if !ok {
+				// Missing critical header.
+				return ErrCryptoFailure
+			}
+
+			if err := h(val); err != nil {
+				return ErrCryptoFailure
+			}
+		} else {
+			return ErrUnhandledCriticalProperty
+		}
 	}
 
 	input := obj.computeAuthData(payload, &signature)
