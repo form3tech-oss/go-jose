@@ -25,7 +25,7 @@ import (
 
 	"golang.org/x/crypto/ed25519"
 
-	"gopkg.in/square/go-jose.v2/json"
+	"encoding/json"
 )
 
 // NonceSource represents a source of random nonces to go into JWS objects
@@ -362,7 +362,7 @@ func (obj JSONWebSignature) DetachedVerify(payload []byte, verificationKey inter
 				return ErrCryptoFailure
 			}
 
-			if err := h(val); err != nil {
+			if err := h((*json.RawMessage)(val)); err != nil {
 				return ErrCryptoFailure
 			}
 		} else {
